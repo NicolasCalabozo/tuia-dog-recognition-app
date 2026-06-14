@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     # PostgreSQL / pgvector
     use_pgvector: bool = os.getenv("USE_PGVECTOR", "True").lower() == "true"
     postgres_host: str = os.getenv("POSTGRES_HOST", "localhost")
+    postgres_alt_host: str = os.getenv("POSTGRES_ALT_HOST", "localhost")
     postgres_port: int = os.getenv("POSTGRES_PORT", 5432)
     postgres_db: str = os.getenv("POSTGRES_DB", "dogs")
     postgres_user: str = os.getenv("POSTGRES_USER", "dogs_user")

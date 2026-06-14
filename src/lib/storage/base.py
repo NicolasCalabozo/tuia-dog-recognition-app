@@ -11,4 +11,3 @@ class EmbeddingStoreProtocol(Protocol):
 
     def append(self, record: EmbeddingRecord) -> None:
         ...
-    
