@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Callable, Optional
 from uuid import uuid4
@@ -95,6 +96,12 @@ class SimilarityService:
     # ------------------------------------------------------------------
     
     def extract_embedding(self, image: np.ndarray) -> list[float]:
+        """
+        Extrae el embedding de una imagen utilizando el modelo base.
+        Retorna un vector de características normalizado.
+        """
+        start_time = time.perf_counter()
+        logger.debug("Extrayendo embedding de imagen")
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         input_tensor = self.preprocess(image_rgb).unsqueeze(0).to(self.device) #type: ignore
@@ -104,10 +111,18 @@ class SimilarityService:
             embedding_norm = F.normalize(embedding, p=2, dim=1)
             
         embedding_np = embedding_norm.cpu().numpy()
+        elapsed_time = time.perf_counter() - start_time
+        logger.debug(f"Extracción de embedding completa en {elapsed_time:.4f} segundos")
         return embedding_np.flatten().tolist()
 
 
     def search_similar_images(self, embedding: list[float], top_k: int) -> list[Neighbor]:
+        """
+        Busca las top_k imágenes más similares en el vector store.
+        Calcula el score de similitud y resuelve las URLs de las imágenes.
+        """
+        start_time = time.perf_counter()
+        logger.info(f"Buscando las {top_k} imágenes más similares")
         registros = self.store.alt_search(embedding, top_k) # type: ignore
         
         vecinos = []
@@ -123,16 +138,20 @@ class SimilarityService:
             )
             vecinos.append(vecino)
             
+        elapsed_time = time.perf_counter() - start_time
+        logger.debug(f"Encontrados {len(vecinos)} vecinos en {elapsed_time:.4f} segundos")
         return vecinos
 
     def predict_breed_from_neighbors(self, results: list[Neighbor]) -> tuple[str, float]:
         """
-        Predice la raza a partir de los vecinos recuperados (ej: voto
-        mayoritario, opcionalmente ponderado por score).
+        Predice la raza a partir de los vecinos recuperados por voto
+        mayoritario ponderado por score.
 
         Si el mejor score esta por debajo de self.similarity_threshold se
         considera "unknown". Retorna (raza, score).
         """
+        start_time = time.perf_counter()
+        logger.info(f"Prediciendo raza a partir de {len(results)} vecinos")
         resultados: dict[str, list[float]] = {}
 
         for vecino in results:
@@ -148,10 +167,17 @@ class SimilarityService:
                 resultados["unknown"][0] += vecino.score
                 resultados["unknown"][1] += 1
         
+        if not resultados:
+            logger.warning("No hay resultados para predecir la raza")
+            return ("unknown", 0.0)
+
         raza_ganadora = max(resultados.keys(), key=lambda r: resultados[r][0])
         suma_ganadora = resultados[raza_ganadora][0]
         conteo_ganador = resultados[raza_ganadora][1]
         score_promedio = suma_ganadora / conteo_ganador
+        
+        elapsed_time = time.perf_counter() - start_time
+        logger.info(f"Raza predicha: {raza_ganadora} (score promedio: {score_promedio:.4f}) en {elapsed_time:.4f} segundos")
         return (raza_ganadora, score_promedio)
         
 
