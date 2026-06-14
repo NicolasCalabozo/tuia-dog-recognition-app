@@ -146,11 +146,26 @@ class PgVectorEmbeddingStore:
                 ORDER BY embedding <=> %s
                 LIMIT %s
                 """,
-                (query, k),
+                (query, k), 
             )
             rows = cur.fetchall()
         return [self._row_to_record(row) for row in rows]
     
+    def alt_search(self, query: list[float], k: int = 10) -> list[EmbeddingRecord]:
+        """Top-k vecinos por producto punto (operador <#> de pgvector)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id_imagen, embedding, path, breed, metadata
+                FROM embeddings
+                ORDER BY embedding <#> %s
+                LIMIT %s
+                """,
+                (query, k),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     #Función para eliminar todos los registros de la tabla de embeddings
     def truncate(self) -> None:
         """

@@ -6,15 +6,36 @@ from pathlib import Path
 from typing import Callable, Optional
 from uuid import uuid4
 
+from PIL import Image
 import cv2
 import numpy as np
+from sklearn import neighbors
+import torch
+import torch.nn as nn
+from torchvision import models, transforms, datasets
+import torch.nn.functional as F
 
 from lib.schemas import EmbeddingRecord, Neighbor, SearchResult
 from lib.storage.base import EmbeddingStoreProtocol
 
 logger = logging.getLogger(__name__)
 
+class EfficientNetEmbedding(nn.Module):
+    """
+    Modelo personalizado para extraer embeddings de EfficientNet-B0.
+    - Se eliminan las capas de clasificación y se mantiene la parte de extracción de características.
+    - El método forward devuelve un vector de características de tamaño 1280.
+    """
+    def __init__(self, base_model):
+        super().__init__()
+        self.features = base_model.features
+        self.pool = base_model.avgpool
 
+    def forward(self, x):
+        x = self.features(x)
+        x = self.pool(x)
+        return torch.flatten(x, 1)
+    
 class SimilarityService:
     """Etapa 1: buscador de imagenes por similitud.
 
@@ -45,6 +66,23 @@ class SimilarityService:
         self.model_name = model_name
         self.url_resolver = url_resolver
 
+        weights = models.EfficientNet_B0_Weights.DEFAULT
+        base_model = models.efficientnet_b0(weights=weights)
+        
+        self.model = EfficientNetEmbedding(base_model)
+        self.model.eval() 
+        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+
+        self.preprocess = transforms.Compose([
+            transforms.ToPILImage(),            
+            transforms.Resize(self.image_size), 
+            transforms.CenterCrop(224),         
+            transforms.ToTensor(),      
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
     def _load_image(self, source_path: str) -> np.ndarray:
         image = cv2.imread(str(source_path))
         if image is None:
@@ -55,33 +93,37 @@ class SimilarityService:
     # ------------------------------------------------------------------
     # Etapa 1: funciones a implementar
     # ------------------------------------------------------------------
-
+    
     def extract_embedding(self, image: np.ndarray) -> list[float]:
-        """
-        Genera el embedding de una imagen usando un modelo pre-entrenado en
-        ImageNet (ej: ResNet50, EfficientNet, ConvNeXt) sin la capa de
-        clasificacion final.
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        input_tensor = self.preprocess(image_rgb).unsqueeze(0).to(self.device) #type: ignore
+        
+        with torch.no_grad():
+            embedding = self.model(input_tensor)
+            embedding_norm = F.normalize(embedding, p=2, dim=1)
+            
+        embedding_np = embedding_norm.cpu().numpy()
+        return embedding_np.flatten().tolist()
 
-        Sugerencias:
-          - Preprocesar la imagen (resize a self.image_size, normalizacion ImageNet).
-          - Usar torchvision.models o timm con pesos pre-entrenados.
-          - Recordar que la imagen llega en BGR (OpenCV).
-        Retorna una lista de floats de dimension EMBEDDING_DIM.
-        """
-        raise NotImplementedError("Etapa 1: implementar extract_embedding")
 
     def search_similar_images(self, embedding: list[float], top_k: int) -> list[Neighbor]:
-        """
-        Recupera de la base vectorial las top_k imagenes mas similares.
+        registros = self.store.alt_search(embedding, top_k) # type: ignore
+        
+        vecinos = []
+        for registro in registros:
 
-        Sugerencias:
-          - Con pgvector: self.store.search(embedding, top_k).
-          - Con JSON: iterar self.store.all() y usar self.similarity(...).
-          - Respetar SIMILARITY_METRIC (cosine | l2).
-        Retorna una lista de Neighbor (path, breed, score) ordenada por score
-        descendente.
-        """
-        raise NotImplementedError("Etapa 1: implementar search_similar_images")
+            image_url = self.url_resolver(Path(registro.path)) if self.url_resolver else None
+            score = self.similarity(embedding, registro.embedding)
+            vecino = Neighbor(
+                path=registro.path,
+                breed=registro.breed,
+                score=score,
+                url=image_url
+            )
+            vecinos.append(vecino)
+            
+        return vecinos
 
     def predict_breed_from_neighbors(self, results: list[Neighbor]) -> tuple[str, float]:
         """
@@ -91,7 +133,27 @@ class SimilarityService:
         Si el mejor score esta por debajo de self.similarity_threshold se
         considera "unknown". Retorna (raza, score).
         """
-        raise NotImplementedError("Etapa 1: implementar predict_breed_from_neighbors")
+        resultados: dict[str, list[float]] = {}
+
+        for vecino in results:
+
+            if vecino.score >= self.similarity_threshold:
+                if vecino.breed not in resultados:
+                    resultados[vecino.breed] = [0.0, 0]
+                resultados[vecino.breed][0] += vecino.score 
+                resultados[vecino.breed][1] += 1 
+            else:
+                if "unknown" not in resultados:
+                    resultados["unknown"] = [0.0, 0]
+                resultados["unknown"][0] += vecino.score
+                resultados["unknown"][1] += 1
+        
+        raza_ganadora = max(resultados.keys(), key=lambda r: resultados[r][0])
+        suma_ganadora = resultados[raza_ganadora][0]
+        conteo_ganador = resultados[raza_ganadora][1]
+        score_promedio = suma_ganadora / conteo_ganador
+        return (raza_ganadora, score_promedio)
+        
 
     # ------------------------------------------------------------------
     # Helpers de similitud provistos
@@ -102,6 +164,9 @@ class SimilarityService:
         if denom == 0:
             return 0.0
         return float(np.dot(a, b) / denom)
+    
+    def _dot_product(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.dot(a, b))
 
     def _l2_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         dist = float(np.linalg.norm(a - b))
@@ -112,6 +177,8 @@ class SimilarityService:
         b = np.asarray(ref, dtype=np.float32)
         if self.similarity_metric.lower() == "l2":
             return self._l2_similarity(a, b)
+        if self.similarity_metric.lower() == "dot":
+            return self._dot_product(a, b)
         return self._cosine(a, b)
 
     # ------------------------------------------------------------------
