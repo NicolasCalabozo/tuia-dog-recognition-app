@@ -7,6 +7,7 @@ from typing import Any
 
 from ..schemas import CNNCustom
 import time
+import json
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -242,6 +243,15 @@ class ClassifierService:
         tiempo_transcurrido = time.time() - inicio
         print(f'\nEntrenamiento completado en {tiempo_transcurrido // 60:.0f}m {tiempo_transcurrido % 60:.0f}s')
         print(f'Mejor Pérdida en Validación: {mejor_perdida:.4f}')
+
+        archivo_historial = self.output_path / f"{self.active_model_name}_history.json"
+        self.output_path.mkdir(parents=True, exist_ok=True) 
+        
+        with open(archivo_historial, 'w') as f:
+            json.dump(historial, f, indent=4)
+            
+        print(f"Historial guardado exitosamente en: {archivo_historial}")
+
         return historial
 
     def evaluate_classifier(self) -> dict[str, float]:
@@ -302,7 +312,8 @@ class ClassifierService:
         # Specificity = TN / (TN + FP).
         specificity_per_class = np.divide(tn, (tn + fp), out=np.zeros_like(tn, dtype=float), where=(tn + fp) != 0)
         spec = float(np.mean(specificity_per_class))
-        return {
+
+        resultados = {
             "accuracy": round(acc, 2),
             "precision": round(prec, 2),
             "recall": round(rec, 2),
@@ -310,6 +321,16 @@ class ClassifierService:
             "f1": round(f1, 2),
             "confusion_matrix": cm.tolist()
         }
+        
+        archivo_metricas = self.output_path / f"{self.active_model_name}_metrics.json"
+        self.output_path.mkdir(parents=True, exist_ok=True)
+        
+        with open(archivo_metricas, 'w') as f:
+            json.dump(resultados, f, indent=4)
+            
+        print(f"Métricas guardadas exitosamente en: {archivo_metricas}")
+
+        return resultados
     
 def extract_custom_embedding(self, image: np.ndarray) -> list[float]:
         """
