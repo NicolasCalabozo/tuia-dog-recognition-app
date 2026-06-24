@@ -159,7 +159,8 @@ class ClassifierService:
 
         # Configuración de la función de pérdida, optimizador y scheduler
         criterio = nn.CrossEntropyLoss()
-        optimizador = optim.Adam(modelo.parameters(), lr=0.001)
+        parametros_a_entrenar = filter(lambda p: p.requires_grad, modelo.parameters())
+        optimizador = optim.Adam(parametros_a_entrenar, lr=0.001)
         programador = optim.lr_scheduler.ReduceLROnPlateau(optimizador, patience=5)
 
         #Lógica de Entrenamiento
