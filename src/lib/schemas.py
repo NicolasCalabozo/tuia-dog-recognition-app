@@ -4,6 +4,10 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 
 class EmbeddingRecord(BaseModel):
     """Registro de la base vectorial (estructura sugerida por el TP)."""
@@ -116,3 +120,70 @@ class StatusResponse(BaseModel):
 class ModelsResponse(BaseModel):
     models: list[str]
     selected: str
+
+class BloqueResidual(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(BloqueResidual, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+class CNNCustom(nn.Module):
+    def __init__(self, num_clases=70):
+        super(CNNCustom, self).__init__()
+
+        # Extractor inicial
+        self.conv_inicial = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn_inicial = nn.BatchNorm2d(64)
+
+        # Apilamos múltiples bloques residuales por capa
+        # Al poner 2 bloques por capa, nos acercamos a la estructura real de una ResNet-18
+        self.capa1 = self._crear_capa(in_channels=64, out_channels=64, stride=1, num_bloques=2)
+        self.capa2 = self._crear_capa(in_channels=64, out_channels=128, stride=2, num_bloques=2)
+        self.capa3 = self._crear_capa(in_channels=128, out_channels=256, stride=2, num_bloques=2)
+        self.capa4 = self._crear_capa(in_channels=256, out_channels=512, stride=2, num_bloques=2)
+
+        # GAP y Clasificador
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout = nn.Dropout(0.4) # Aumentamos un poco el dropout porque la red es más grande
+        self.fc = nn.Linear(512, num_clases)
+
+    def _crear_capa(self, in_channels, out_channels, stride, num_bloques):
+        capas = []
+        # El primer bloque de la capa se encarga del cambio de dimensiones (stride)
+        capas.append(BloqueResidual(in_channels, out_channels, stride))
+        # Los bloques siguientes mantienen las dimensiones y añaden profundidad
+        for _ in range(1, num_bloques):
+            capas.append(BloqueResidual(out_channels, out_channels, stride=1))
+        return nn.Sequential(*capas)
+
+    def forward(self, x):
+        x = F.relu(self.bn_inicial(self.conv_inicial(x)))
+
+        x = self.capa1(x)
+        x = self.capa2(x)
+        x = self.capa3(x)
+        x = self.capa4(x)
+
+        x = self.gap(x)
+        x = torch.flatten(x, 1)
+
+        x = self.dropout(x)
+        x = self.fc(x)
+
+        return x
