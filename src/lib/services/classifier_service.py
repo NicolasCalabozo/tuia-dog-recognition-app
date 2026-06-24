@@ -285,14 +285,17 @@ class ClassifierService:
         print(f"Evaluando modelo '{self.active_model_name}' sobre {len(test_dataset)} imágenes")
         y_true = []
         y_pred = []
+        y_probs = []
+
         with torch.no_grad():
                 for entradas, etiquetas in test_loader:
                     entradas = entradas.to(device)
                     salidas = modelo(entradas)
                     _, predicciones = torch.max(salidas, 1)
-                    
                     y_true.extend(etiquetas.cpu().numpy())
                     y_pred.extend(predicciones.cpu().numpy())
+                    probabilidades = torch.softmax(salidas, dim=1)
+                    y_probs.extend(probabilidades.cpu().numpy())
 
         y_true = np.array(y_true)
         y_pred = np.array(y_pred)
@@ -319,7 +322,9 @@ class ClassifierService:
             "recall": round(rec, 2),
             "specificity": round(spec, 2),
             "f1": round(f1, 2),
-            "confusion_matrix": cm.tolist()
+            "confusion_matrix": cm.tolist(),
+            "y_true": np.array(y_true).tolist(),
+            "y_probs": np.array(y_probs).tolist()
         }
         
         archivo_metricas = self.output_path / f"{self.active_model_name}_metrics.json"
