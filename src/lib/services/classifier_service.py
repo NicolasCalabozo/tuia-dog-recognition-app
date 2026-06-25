@@ -74,18 +74,42 @@ class ClassifierService:
         key = name or self.active_model_name
         if key in self._loaded:
             return self._loaded[key]
+        
         path = self.checkpoints[key]
         if not path.exists():
             raise ValueError(
                 f"Checkpoint not found: {path}. Entrena el modelo (Etapa 2) y guardalo en esa ruta."
             )
+            
         suf = path.suffix.lower()
         if suf == ".pth":
-            model = torch.load(path, map_location="cpu", weights_only=False)
+            # Cargamos el diccionario completo (checkpoint)
+            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+            
+            # Averiguamos el número de clases leyendo las subcarpetas del dataset de entrenamiento
+            train_dir = self.dataset_path / 'train'
+            num_clases = len([d for d in train_dir.iterdir() if d.is_dir()])
+            
+            # Instanciamos la arquitectura correcta según el 'key' del modelo activo
+            if key == os.getenv("RESNET18_MODEL_NAME", "resnet18_finetuned"):
+                model = models.resnet18() # No necesitamos weights=DEFAULT porque cargaremos los nuestros
+                num_ftrs = model.fc.in_features
+                model.fc = nn.Linear(num_ftrs, num_clases)
+                
+            elif key == os.getenv("CNN_CUSTOM_MODEL_NAME", "cnn_custom"):
+                model = CNNCustom(num_clases=num_clases)
+                
+            else:
+                raise ValueError(f"Modelo no soportado para carga: {key}")
+            
+            # Inyectamos los pesos guardados en la arquitectura instanciada
+            model.load_state_dict(checkpoint['modelo_estado'])
+
         elif suf == ".onnx":
             model = onnxruntime.InferenceSession(str(path))
         else:
             raise ValueError(f"Unsupported model format (expected .pth or .onnx): {path}")
+            
         self._loaded[key] = model
         return model
 
