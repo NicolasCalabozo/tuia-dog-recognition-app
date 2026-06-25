@@ -346,6 +346,7 @@ class ClassifierService:
             "recall": round(rec, 2),
             "specificity": round(spec, 2),
             "f1": round(f1, 2),
+            "classes": test_dataset.classes,
             "confusion_matrix": cm.tolist(),
             "y_true": np.array(y_true).tolist(),
             "y_probs": np.array(y_probs).tolist()
