@@ -116,7 +116,8 @@ class DetectionService:
         El recorte llega en BGR (OpenCV). Retorna (raza, score).
         """
 
-        model = self.classifier.load_model()              # objeto completo (.pth) con .classes adjunto
+        #AYUDAME LOCO NO SE QUE HACER
+        model = self.classifier.load_model()
         device = self.classifier.device
         model.to(device).eval()
 
