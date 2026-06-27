@@ -121,6 +121,16 @@ class ClassifierService:
     def train_classifier(self, num_epocas: int = 100) -> dict[str, list[float]]:
         """
         Entrena el clasificador de razas sobre el dataset (self.dataset_path).
+        
+        Hiperparámetros configurados:
+        - Learning Rate: 0.001 (Adam optimizer)
+        - Batch Size: Definido por variable de entorno BATCH_SIZE
+        - Epochs: {num_epocas}
+        - Optimizador: Adam
+        - Scheduler: ReduceLROnPlateau (patience=5, mode='min')
+        - Early Stopping: Activado (paciencia=15)
+        
+        El modelo resultante se guarda en: {self.active_checkpoint}
         """
         # Establecemos el preprocesamiento de imágenes para adaptar a Resnet18 y CNN custom
         preprocess = transforms.Compose([
@@ -173,8 +183,10 @@ class ClassifierService:
                 param.requires_grad = True
 
             num_ftrs = modelo.fc.in_features
+            #Reemplazamos la capa final para que coincida con el número de clases de nuestro dataset
             modelo.fc = nn.Linear(num_ftrs, num_clases)
         elif self.active_model_name == os.getenv("CNN_CUSTOM_MODEL_NAME", "cnn_custom"):
+            #Instanciamos nuestro modelo CNN customizado
             modelo = CNNCustom(num_clases=num_clases) 
         else:
             raise ValueError(f"Modelo no soportado para entrenamiento: {self.active_model_name}")
@@ -182,7 +194,7 @@ class ClassifierService:
         print(f"Modelo Instanciado: {self.active_model_name}")
         modelo = modelo.to(device)
 
-        # Configuración de la función de pérdida, optimizador y scheduler
+        #Configuración de la función de pérdida, optimizador y scheduler
         criterio = nn.CrossEntropyLoss()
         parametros_a_entrenar = filter(lambda p: p.requires_grad, modelo.parameters())
         optimizador = optim.Adam(parametros_a_entrenar, lr=0.001)
@@ -330,7 +342,7 @@ class ClassifierService:
         f1 = float(f1_score(y_true, y_pred, average='macro', zero_division=0))
         cm = confusion_matrix(y_true, y_pred)
 
-        # Para cada clase extraemos sus valores
+        # Para cada clase extraemos sus valores a partir de la matriz de confusión
         fp = cm.sum(axis=0) - np.diagonal(cm)  # Falsos Positivos
         fn = cm.sum(axis=1) - np.diagonal(cm)  # Falsos Negativos
         tp = np.diagonal(cm)                   # Verdaderos Positivos
@@ -364,7 +376,16 @@ class ClassifierService:
     
 def extract_custom_embedding(self, image: np.ndarray) -> list[float]:
         """
-        Genera el embedding a partir del modelo activo
+        Genera el embedding a partir del modelo activo - Implementada pero no utilizada
+        Reemplaza la última capa por una identidad (dummy) para poder extraer el embedding.
+
+        TO-DO: 
+        - Agregar la instancia de modelo a __init__ para no cargar el modelo en caso de extracción masiva
+        - Extraer embeddings de Test
+        - Contrastarlos contra la BBDD vectorial
+        - Observar agrupación de resultados utilizando PCA y T-SNE o algoritmos de clusterización
+        - Al día de hoy es incompatible con la base de datos vectorial de Etapa 1 por la diferencia
+            en dimensionalidad de los embeddings 1280 de EfficientNetB0 vs. 512 de Resnet18 y CNN Custom.
         """
 
         imagen_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
