@@ -16,6 +16,8 @@ from ultralytics import YOLO
 
 import torch
 import torch.nn as nn
+from PIL import Image
+from torchvision import transforms
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +117,47 @@ class DetectionService:
 
         El recorte llega en BGR (OpenCV). Retorna (raza, score).
         """
+        if crop.size == 0:
+            return "unknown", 0.0
 
-        #AYUDAME LOCO NO SE QUE HACER
+        # Convertimos de BGR a RGB y luego a PIL Image
+        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        crop_pil = Image.fromarray(crop_rgb)
+
+        # Procesamos la imagen
+        # Redimensionamos directamente a (224, 224) para no perder los bordes del recorte de YOLO
+        preprocess = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        input_tensor = preprocess(crop_pil).unsqueeze(0)
+
+        # Cargamos el modelo y hacemos la predicción
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = self.classifier.load_model()
-        device = self.classifier.device
-        model.to(device).eval()
+        model = model.to(device)
+        model.eval()
+        input_tensor = input_tensor.to(device)
 
+        with torch.no_grad():
+            outputs = model(input_tensor)
+            # Aplicar softmax a los logits crudos para obtener probabilidades
+            probs = torch.softmax(outputs, dim=1)
+            score, predicted_idx = torch.max(probs, 1)
+
+        score_val = score.item()
+        idx = predicted_idx.item()
+
+        # Mapeamos el índice dela clase predicha con la raza
+        train_dir = self.classifier.dataset_path / 'train'
+        if not train_dir.exists():
+            return "unknown", score_val
+            
+        classes = sorted([d.name for d in train_dir.iterdir() if d.is_dir()])
+        breed = classes[idx] if 0 <= idx < len(classes) else "unknown"
+
+        return breed, score_val
 
     # ------------------------------------------------------------------
     # Orquestacion provista
