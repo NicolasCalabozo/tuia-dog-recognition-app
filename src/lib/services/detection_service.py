@@ -11,6 +11,12 @@ import numpy as np
 from lib.schemas import ClassifyResult, DetectResult, DogDetection
 from lib.services.classifier_service import ClassifierService
 
+import os
+from ultralytics import YOLO
+
+import torch
+import torch.nn as nn
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +81,32 @@ class DetectionService:
 
         Retorna una lista de ((x1, y1, x2, y2), confidence) en pixeles.
         """
-        raise NotImplementedError("Etapa 3: implementar detect_dogs")
+        if getattr(self, "_yolo", None) is None:
+            # Cargamos el modelo usando el nombre que ya guardó la clase
+            self._yolo = YOLO(self.yolo_model_name)
+        
+        # Usamos el modelo ya cargado y el threshold de la clase
+        results = self._yolo(image, conf=self.conf_threshold, verbose=False)
+    
+        detecciones = []
+        
+        if results and len(results) > 0:
+            for box in results[0].boxes:
+                id = int(box.cls[0].item())
+                
+                # Comparamos con el id de clase guardado en la instancia
+                if id == self.dog_class_id:
+                    coords = box.xyxy[0].tolist()
+                    
+                    x1 = int(round(coords[0]))
+                    y1 = int(round(coords[1]))
+                    x2 = int(round(coords[2]))
+                    y2 = int(round(coords[3]))
+                    
+                    confidence = float(box.conf[0].item())
+                    detecciones.append(((x1, y1, x2, y2), confidence))
+                    
+        return detecciones
 
     def classify_detected_dog(self, crop: np.ndarray) -> tuple[str, float]:
         """
@@ -84,7 +115,12 @@ class DetectionService:
 
         El recorte llega en BGR (OpenCV). Retorna (raza, score).
         """
-        raise NotImplementedError("Etapa 3: implementar classify_detected_dog")
+
+        #AYUDAME LOCO NO SE QUE HACER
+        model = self.classifier.load_model()
+        device = self.classifier.device
+        model.to(device).eval()
+
 
     # ------------------------------------------------------------------
     # Orquestacion provista
