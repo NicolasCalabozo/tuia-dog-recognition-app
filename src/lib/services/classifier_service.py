@@ -92,12 +92,12 @@ class ClassifierService:
             num_clases = len([d for d in train_dir.iterdir() if d.is_dir()])
             
             # Instanciamos la arquitectura correcta según el 'key' del modelo activo
-            if key == os.getenv("RESNET18_MODEL_NAME", "resnet18_finetuned"):
+            if key == "resnet18_finetuned":
                 model = models.resnet18() # No necesitamos weights=DEFAULT porque cargaremos los nuestros
                 num_ftrs = model.fc.in_features
                 model.fc = nn.Linear(num_ftrs, num_clases)
                 
-            elif key == os.getenv("CNN_CUSTOM_MODEL_NAME", "cnn_custom"):
+            elif key == "cnn_custom":
                 model = CNNCustom(num_clases=num_clases)
                 
             else:
@@ -172,7 +172,7 @@ class ClassifierService:
         
 
         # Selección e instanciación del modelo
-        if self.active_model_name == os.getenv("RESNET18_MODEL_NAME", "resnet18_finetuned"):
+        if self.active_model_name == "resnet18_finetuned":
             #Cargamos el modelo preentrenado ResNet18 y congelamos todas las capas excepto la última
             modelo = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 
@@ -185,7 +185,7 @@ class ClassifierService:
             num_ftrs = modelo.fc.in_features
             #Reemplazamos la capa final para que coincida con el número de clases de nuestro dataset
             modelo.fc = nn.Linear(num_ftrs, num_clases)
-        elif self.active_model_name == os.getenv("CNN_CUSTOM_MODEL_NAME", "cnn_custom"):
+        elif self.active_model_name == "cnn_custom":
             #Instanciamos nuestro modelo CNN customizado
             modelo = CNNCustom(num_clases=num_clases) 
         else:
