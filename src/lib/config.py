@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     model_path: Path = Path(os.getenv("MODEL_PATH", "models"))
     resnet18_model_name: str = os.getenv("RESNET18_MODEL_NAME", "resnet18_finetuned.pth")
     cnn_custom_model_name: str = os.getenv("CNN_CUSTOM_MODEL_NAME", "cnn_custom.pth")
-
+    batch_size: int = int(os.getenv("BATCH_SIZE", 32))
     # Busqueda por similitud
     similarity_metric: str = os.getenv("SIMILARITY_METRIC", "cosine")
     similarity_threshold: float = os.getenv("SIMILARITY_THRESHOLD", 0.55)
