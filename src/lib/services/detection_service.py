@@ -11,6 +11,14 @@ import numpy as np
 from lib.schemas import ClassifyResult, DetectResult, DogDetection
 from lib.services.classifier_service import ClassifierService
 
+import os
+from ultralytics import YOLO
+
+import torch
+import torch.nn as nn
+from PIL import Image
+from torchvision import transforms
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +83,32 @@ class DetectionService:
 
         Retorna una lista de ((x1, y1, x2, y2), confidence) en pixeles.
         """
-        raise NotImplementedError("Etapa 3: implementar detect_dogs")
+        if getattr(self, "_yolo", None) is None:
+            # Cargamos el modelo usando el nombre que ya guardó la clase
+            self._yolo = YOLO(self.yolo_model_name)
+        
+        # Usamos el modelo ya cargado y el threshold de la clase
+        results = self._yolo(image, conf=self.conf_threshold, verbose=False)
+    
+        detecciones = []
+        
+        if results and len(results) > 0:
+            for box in results[0].boxes:
+                id = int(box.cls[0].item())
+                
+                # Comparamos con el id de clase guardado en la instancia
+                if id == self.dog_class_id:
+                    coords = box.xyxy[0].tolist()
+                    
+                    x1 = int(round(coords[0]))
+                    y1 = int(round(coords[1]))
+                    x2 = int(round(coords[2]))
+                    y2 = int(round(coords[3]))
+                    
+                    confidence = float(box.conf[0].item())
+                    detecciones.append(((x1, y1, x2, y2), confidence))
+                    
+        return detecciones
 
     def classify_detected_dog(self, crop: np.ndarray) -> tuple[str, float]:
         """
@@ -84,7 +117,47 @@ class DetectionService:
 
         El recorte llega en BGR (OpenCV). Retorna (raza, score).
         """
-        raise NotImplementedError("Etapa 3: implementar classify_detected_dog")
+        if crop.size == 0:
+            return "unknown", 0.0
+
+        # Convertimos de BGR a RGB y luego a PIL Image
+        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        crop_pil = Image.fromarray(crop_rgb)
+
+        # Procesamos la imagen
+        # Redimensionamos directamente a (224, 224) para no perder los bordes del recorte de YOLO
+        preprocess = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        input_tensor = preprocess(crop_pil).unsqueeze(0)
+
+        # Cargamos el modelo y hacemos la predicción
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = self.classifier.load_model()
+        model = model.to(device)
+        model.eval()
+        input_tensor = input_tensor.to(device)
+
+        with torch.no_grad():
+            outputs = model(input_tensor)
+            # Aplicar softmax a los logits crudos para obtener probabilidades
+            probs = torch.softmax(outputs, dim=1)
+            score, predicted_idx = torch.max(probs, 1)
+
+        score_val = score.item()
+        idx = predicted_idx.item()
+
+        # Mapeamos el índice dela clase predicha con la raza
+        train_dir = self.classifier.dataset_path / 'train'
+        if not train_dir.exists():
+            return "unknown", score_val
+            
+        classes = sorted([d.name for d in train_dir.iterdir() if d.is_dir()])
+        breed = classes[idx] if 0 <= idx < len(classes) else "unknown"
+
+        return breed, score_val
 
     # ------------------------------------------------------------------
     # Orquestacion provista

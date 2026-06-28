@@ -21,7 +21,7 @@ class PgVectorEmbeddingStore:
         dbname: str,
         user: str,
         password: str,
-        embedding_dim: int = 512,
+        embedding_dim: int = 1280,
     ) -> None:
         self.embedding_dim = embedding_dim
         self.conn = connect(
@@ -71,7 +71,7 @@ class PgVectorEmbeddingStore:
                     metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb
                 )
                 """
-            )
+            ) 
 
     @staticmethod
     def _row_to_record(row: tuple) -> EmbeddingRecord:
@@ -110,6 +110,31 @@ class PgVectorEmbeddingStore:
                     json.dumps(record.metadata, ensure_ascii=True),
                 ),
             )
+    #Función para insertar múltiples registros en una sola operación, ignorando duplicados por id_imagen
+    #Mejora la eficiencia al reducir la cantidad de conexiones individuales a la base de datos
+    #Pasamos de tener una conexión por registro a total_registros / batch_size conexiones
+    def append_batch(self, records: list[EmbeddingRecord]) -> None:
+        """Inserta múltiples registros en una sola operación, ignorando duplicados por id_imagen."""
+        datos = [
+            (
+                r.id_imagen,
+                r.embedding,
+                r.path,
+                r.breed,
+                json.dumps(r.metadata, ensure_ascii=True)
+            )
+            for r in records
+        ]
+        
+        with self.conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO embeddings (id_imagen, embedding, path, breed, metadata)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (id_imagen) DO NOTHING
+                """,
+                datos
+            )
 
     def search(self, query: list[float], k: int = 10) -> list[EmbeddingRecord]:
         """Top-k vecinos por distancia coseno (operador <=> de pgvector)."""
@@ -118,10 +143,35 @@ class PgVectorEmbeddingStore:
                 """
                 SELECT id_imagen, embedding, path, breed, metadata
                 FROM embeddings
-                ORDER BY embedding <=> %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (query, k), 
+            )
+            rows = cur.fetchall()
+        return [self._row_to_record(row) for row in rows]
+    
+    def alt_search(self, query: list[float], k: int = 10) -> list[EmbeddingRecord]:
+        """Top-k vecinos por producto punto (operador <#> de pgvector)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id_imagen, embedding, path, breed, metadata
+                FROM embeddings
+                ORDER BY embedding <#> %s::vector
                 LIMIT %s
                 """,
                 (query, k),
             )
             rows = cur.fetchall()
         return [self._row_to_record(row) for row in rows]
+
+    #Función para eliminar todos los registros de la tabla de embeddings
+    def truncate(self) -> None:
+        """
+        Elimina todos los registros de la tabla de embeddings de forma permanente.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute("TRUNCATE TABLE embeddings;")
+            
+        logger.info("La tabla 'embeddings' ha sido truncada (vaciada) exitosamente.")
